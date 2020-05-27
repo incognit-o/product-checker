@@ -1,5 +1,5 @@
 wxpython
 requests
 selenium
-chromedriver-py==81.0.4044.69
+chromedriver-py
 lxml

@@ -96,6 +96,14 @@ Sample discord output:
 
 ![Discord 2](./img/discord2.png "Discord 2")
 
+# Gamestop & Amazon not working correctly?
+
+The most likely cause for this is the incorrect setup of Chrome / Webdriver.
+
+These websites will not work if you do not have Chrome installed because the code uses webdriver to parse these websites.
+
+Also, ensure both chromedriver-py and Chrome are updated to the latest version (As of 5/26/20, that would be version 83 something). This way, selenium will work as intended and emulate a web browser correctly.
+
 # Notes:
 
 Remember: This code is not perfect, there will be bugs, glitches, and unhandled exceptions, but if you do everything as you should, with proper URLs and assigning them to webhook destinations, your chances of running into an unhandled exception are slim.
