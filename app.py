@@ -1,7 +1,8 @@
-#/usr/bin/python3
+# /usr/bin/python3
 # https://github.com/tnware/product-checker
 # by Tyler Woods
 # coded for Bird Bot and friends
+# modified by incognit-o (fixed amazon & gamestop)
 # https://tylermade.net
 import requests
 import time
@@ -14,7 +15,8 @@ import product_settings
 from threading import Thread
 from selenium import webdriver
 from chromedriver_py import binary_path as driver_path
-from lxml import html  
+from lxml import html
+
 stockdict = {}
 sku_dict = {}
 bestbuylist = []
@@ -26,7 +28,7 @@ bbimgdict = {}
 amazonlist = []
 gamestoplist = []
 
-#Function for start-up menu
+# Function for start-up menu
 
 def menu():
     webhook_dict = return_data("./data/webhooks.json")
@@ -45,20 +47,29 @@ def menu():
         menu()
 
 def return_data(path):
-    with open(path,"r") as file:
+    with open(path, "r") as file:
         data = json.load(file)
     file.close()
     return data
 
-#Prompt the user at startup
+def pushover(message, url, title):
+    requests.post("https://api.pushover.net/1/messages.json", data={'token': pushover_token,
+                                                                    'user': pushover_user,
+                                                                    'message': message,
+                                                                    'url': url,
+                                                                    'url_title': 'GO TO THE STORE!',
+                                                                    'title': title})
+
+# Prompt the user at startup
 menu()
 
-#Only declare the webhook and product lists after the menu has been passed so that changes made from menu selections are up to date
+# Only declare the webhook and product lists after the menu has been passed so that changes made from menu selections are up to date
 webhook_dict = return_data("./data/webhooks.json")
 urldict = return_data("./data/products.json")
+pushover_token = return_data("./data/pushover.json")["token"]
+pushover_user = return_data("./data/pushover.json")["user"]
 
-#Declare classes for the webpage scraping functionality
-
+# Declare classes for the webpage scraping functionality
 
 class Amazon:
 
@@ -70,34 +81,38 @@ class Amazon:
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         options.add_argument('log-level=3')
         options.add_argument('--ignore-certificate-errors')
-        options.add_argument('--user-agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.50 Safari/537.36"')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--no-sandbox')
+        options.add_argument(
+            '--user-agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.50 Safari/537.36"')
         options.add_argument("headless")
-        driver = webdriver.Chrome(executable_path=driver_path, chrome_options=options)
+        driver = webdriver.Chrome(executable_path=driver_path, options=options)
         driver.get(url)
 
         html = driver.page_source
         if "To discuss automated access to Amazon data please contact api-services-support@amazon.com." in html:
             print("Amazons Bot Protection is preventing this call.")
-        else: 
-            status_raw = driver.find_element_by_xpath("//div[@id='olpOfferList']")
-            status_text = status_raw.text
+        else:
+            available = not ("Currently, there are no sellers that can deliver this item to your location." in html)
             title_raw = driver.find_element_by_xpath("//h1[@class='a-size-large a-spacing-none']")
             title_text = title_raw.text
             title = title_text
             now = datetime.now()
             current_time = now.strftime("%H:%M:%S")
-            if "Currently, there are no sellers that can deliver this item to your location." not in status_text:
+            if available:
+                pushover("In Stock: (Amazon.com) " + title, url, "AMAZON-BOT")
                 print("[" + current_time + "] " + "In Stock: (Amazon.com) " + title + " - " + url)
-                slack_data = {'content': "[" + current_time + "] " +  title + " in stock at Amazon - " + url}
+                slack_data = {'content': "[" + current_time + "] " + title + " in stock at Amazon - " + url}
                 if stockdict.get(url) == 'False':
                     response = requests.post(
-                    webhook_url, data=json.dumps(slack_data),
-                    headers={'Content-Type': 'application/json'})
+                        webhook_url, data=json.dumps(slack_data),
+                        headers={'Content-Type': 'application/json'})
                 stockdict.update({url: 'True'})
             else:
                 print("[" + current_time + "] " + "Sold Out: (Amazon.com) " + title)
                 stockdict.update({url: 'False'})
         driver.quit()
+
 
 class Gamestop:
 
@@ -111,52 +126,57 @@ class Gamestop:
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         options.add_argument('log-level=3')
         options.add_argument('--ignore-certificate-errors')
-        options.add_argument('--user-agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.50 Safari/537.36"')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--no-sandbox')
+        options.add_argument(
+            '--user-agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.50 Safari/537.36"')
         options.add_argument("headless")
-        driver = webdriver.Chrome(executable_path=driver_path, chrome_options=options)
+        driver = webdriver.Chrome(executable_path=driver_path, options=options)
         driver.get(url)
         status_raw = driver.find_element_by_xpath("//div[@class='add-to-cart-buttons']")
         status_text = status_raw.text
         title_raw = driver.find_element_by_xpath("//h1[@class='product-name h2']")
         title_text = title_raw.text
         title = title_text
-        image_raw = driver.find_element_by_xpath("//img[@class='mainImg ae-img']")
+        image_raw = driver.find_element_by_xpath("//img[@class='mainImg']")
         img = image_raw.get_attribute('src')
         now = datetime.now()
         current_time = now.strftime("%H:%M:%S")
         if "ADD TO CART" in status_text:
             print("[" + current_time + "] " + "In Stock: (Gamestop.com) " + title + " - " + url)
+            pushover(title + " in stock at GameStop", url, "GAMESTOP-BOT")
             slack_data = {
                 'username': "GameStop Bot",
-                'content': "GameStop Stock Alert:", 
-                'embeds': [{ 
-                    'title': title,  
-                    'description': title + " in stock at GameStop", 
-                    'url': url, 
+                'content': "GameStop Stock Alert:",
+                'embeds': [{
+                    'title': title,
+                    'description': title + " in stock at GameStop",
+                    'url': url,
                     "fields": [
-                    {
-                        "name": "Time:",
-                        "value": current_time
-                    },
-                    {
-                        "name": "Status:",
-                        "value": "In Stock"
-                    }
-                            ],
-                    'thumbnail': { 
-                        'url': img
+                        {
+                            "name": "Time:",
+                            "value": current_time
+                        },
+                        {
+                            "name": "Status:",
+                            "value": "In Stock"
                         }
-                    }]
-                }
+                    ],
+                    'thumbnail': {
+                        'url': img
+                    }
+                }]
+            }
             if stockdict.get(url) == 'False':
                 response = requests.post(
-                webhook_url, data=json.dumps(slack_data),
-                headers={'Content-Type': 'application/json'})
+                    webhook_url, data=json.dumps(slack_data),
+                    headers={'Content-Type': 'application/json'})
             stockdict.update({url: 'True'})
         else:
             print("[" + current_time + "] " + "Sold Out: (Gamestop.com) " + title)
             stockdict.update({url: 'False'})
         driver.quit()
+
 
 class Target:
 
@@ -170,44 +190,46 @@ class Target:
         imgs = tree.xpath("//img[1]")
         img_raw = str(imgs[0].attrib)
         img = img_raw[20:-2]
-        title = al[al.find('"twitter":{"title":') + 20 : al.find('","card')]
-        #print(title)
+        title = al[al.find('"twitter":{"title":') + 20: al.find('","card')]
+        # print(title)
         now = datetime.now()
         current_time = now.strftime("%H:%M:%S")
         if "Temporarily out of stock" in page.text:
             print("[" + current_time + "] " + "Sold Out: (Target.com) " + title)
             stockdict.update({url: 'False'})
-        else: 
+        else:
             print("[" + current_time + "] " + "In Stock: (Target.com) " + title + " - " + url)
+            pushover(title + " in stock at Target", url, "TARGET-BOT")
             slack_data = {
                 'username': "Target Bot",
                 'avatar_url': "https://github.com/tnware/product-checker/raw/master/img/target.png",
-                'content': "Target Stock Alert:", 
-                'embeds': [{ 
-                    'title': title,  
-                    'description': title + " in stock at Target", 
-                    'url': url, 
+                'content': "Target Stock Alert:",
+                'embeds': [{
+                    'title': title,
+                    'description': title + " in stock at Target",
+                    'url': url,
                     "fields": [
-                    {
-                        "name": "Time:",
-                        "value": current_time
-                    },
-                    {
-                        "name": "Status:",
-                        "value": "In Stock"
-                    }
-                            ],
-                    'thumbnail': { 
-                        'url': img
+                        {
+                            "name": "Time:",
+                            "value": current_time
+                        },
+                        {
+                            "name": "Status:",
+                            "value": "In Stock"
                         }
-                    }]
-                }
+                    ],
+                    'thumbnail': {
+                        'url': img
+                    }
+                }]
+            }
             if stockdict.get(url) == 'False':
                 response = requests.post(
-                webhook_url, data=json.dumps(slack_data),
-                headers={'Content-Type': 'application/json'})
+                    webhook_url, data=json.dumps(slack_data),
+                    headers={'Content-Type': 'application/json'})
             stockdict.update({url: 'True'})
-        #print(stockdict)
+        # print(stockdict)
+
 
 class BestBuy:
 
@@ -219,18 +241,18 @@ class BestBuy:
         current_time = now.strftime("%H:%M:%S")
         url = "https://www.bestbuy.com/api/tcfb/model.json?paths=%5B%5B%22shop%22%2C%22scds%22%2C%22v2%22%2C%22page%22%2C%22tenants%22%2C%22bbypres%22%2C%22pages%22%2C%22globalnavigationv5sv%22%2C%22header%22%5D%2C%5B%22shop%22%2C%22buttonstate%22%2C%22v5%22%2C%22item%22%2C%22skus%22%2C" + sku + "%2C%22conditions%22%2C%22NONE%22%2C%22destinationZipCode%22%2C%22%2520%22%2C%22storeId%22%2C%22%2520%22%2C%22context%22%2C%22cyp%22%2C%22addAll%22%2C%22false%22%5D%5D&method=get"
         headers2 = {
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-        "accept-encoding": "gzip, deflate, br",
-        "accept-language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
-        "cache-control": "max-age=0",
-        "upgrade-insecure-requests": "1",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.69 Safari/537.36"
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+            "accept-encoding": "gzip, deflate, br",
+            "accept-language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+            "cache-control": "max-age=0",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.69 Safari/537.36"
         }
         page = requests.get(url, headers=headers2)
         link = "https://www.bestbuy.com/site/" + sku + ".p?skuId=" + sku
         al = page.text
         search_string = '"skuId":"' + sku + '","buttonState":"'
-        stock_status = al[al.find(search_string) + 33 : al.find('","displayText"')]
+        stock_status = al[al.find(search_string) + 33: al.find('","displayText"')]
         product_name = sku_dict.get(sku)
         if stock_status == "SOLD_OUT":
             print("[" + current_time + "] " + "Sold Out: (BestBuy.com) " + product_name)
@@ -238,38 +260,40 @@ class BestBuy:
         elif stock_status == "CHECK_STORES":
             print(product_name + " sold out @ BestBuy (check stores status)")
             stockdict.update({sku: 'False'})
-        else: 
+        else:
             if stock_status == "ADD_TO_CART":
                 print("[" + current_time + "] " + "In Stock: (BestBuy.com) " + product_name + " - " + link)
+                pushover(product_name + " in stock at BestBuy", link, "BESTBUY-BOT")
                 slack_data = {
                     'username': "BestBuy Bot",
                     'avatar_url': "https://github.com/tnware/product-checker/raw/master/img/bestbuy.png",
-                    'content': "BestBuy Stock Alert:", 
-                    'embeds': [{ 
-                        'title': product_name,  
-                        'description': product_name + " in stock at BestBuy", 
-                        'url': link, 
+                    'content': "BestBuy Stock Alert:",
+                    'embeds': [{
+                        'title': product_name,
+                        'description': product_name + " in stock at BestBuy",
+                        'url': link,
                         "fields": [
-                        {
-                            "name": "Time:",
-                            "value": current_time
-                        },
-                        {
-                            "name": "Status:",
-                            "value": "In Stock"
-                        }
-                                ],
-                        'thumbnail': { 
-                            'url': bbimgdict.get(sku)
+                            {
+                                "name": "Time:",
+                                "value": current_time
+                            },
+                            {
+                                "name": "Status:",
+                                "value": "In Stock"
                             }
-                        }]
-                    }
+                        ],
+                        'thumbnail': {
+                            'url': bbimgdict.get(sku)
+                        }
+                    }]
+                }
                 if stockdict.get(sku) == 'False':
                     response = requests.post(
-                    webhook_url, data=json.dumps(slack_data),
-                    headers={'Content-Type': 'application/json'})
+                        webhook_url, data=json.dumps(slack_data),
+                        headers={'Content-Type': 'application/json'})
                 stockdict.update({sku: 'True'})
-                #print(stockdict)
+                # print(stockdict)
+
 
 class Walmart:
 
@@ -281,7 +305,8 @@ class Walmart:
         tree = html.fromstring(page.content)
         title_raw = tree.xpath("//h1[@class='prod-ProductTitle font-normal']")
         title = title_raw[0].text
-        price_raw = tree.xpath("//span[@class='price display-inline-block arrange-fit price price--stylized']//span[@class='price-characteristic']")
+        price_raw = tree.xpath(
+            "//span[@class='price display-inline-block arrange-fit price price--stylized']//span[@class='price-characteristic']")
         price = price_raw[0].text
         img_raw = tree.xpath("//meta[@property='og:image']/@content")
         img = img_raw[0]
@@ -290,40 +315,42 @@ class Walmart:
         if page.status_code == 200:
             if "Add to cart" in page.text:
                 print("[" + current_time + "] " + "In Stock: (Walmart.com) " + title + " for $" + price + " - " + url)
+                pushover(title + " in stock at Walmart for $" + price, url, "WALMART-BOT")
                 slack_data = {
                     'username': "Walmart Bot",
                     'avatar_url': "https://github.com/tnware/product-checker/raw/master/img/walmart.png",
-                    'content': "Walmart Stock Alert:", 
-                    'embeds': [{ 
-                        'title': title,  
-                        'description': title + " in stock at Walmart for $" + price, 
-                        'url': url, 
+                    'content': "Walmart Stock Alert:",
+                    'embeds': [{
+                        'title': title,
+                        'description': title + " in stock at Walmart for $" + price,
+                        'url': url,
                         "fields": [
-                        {
-                        "name": "Time:",
-                        "value": current_time
-                        },
-                        {
-                            "name": "Price:",
-                            "value": "$" + price
-                        }
-                                ],
-                        'thumbnail': { 
-                            'url': img
+                            {
+                                "name": "Time:",
+                                "value": current_time
+                            },
+                            {
+                                "name": "Price:",
+                                "value": "$" + price
                             }
-                        }]
-                    }
+                        ],
+                        'thumbnail': {
+                            'url': img
+                        }
+                    }]
+                }
                 if stockdict.get(url) == 'False':
                     try:
                         response = requests.post(
-                        webhook_url, data=json.dumps(slack_data),
-                        headers={'Content-Type': 'application/json'})
+                            webhook_url, data=json.dumps(slack_data),
+                            headers={'Content-Type': 'application/json'})
                     except:
                         print("Webhook sending failed. Invalid URL configured.")
                 stockdict.update({url: 'True'})
-            else: 
+            else:
                 print("[" + current_time + "] " + "Sold Out: (Walmart.com) " + title)
                 stockdict.update({url: 'False'})
+
 
 class BH:
 
@@ -337,22 +364,23 @@ class BH:
         if page.status_code == 200:
             if "Add to Cart" in page.text:
                 print("[" + current_time + "] " + "In Stock: (bhphotovideo.com) " + url)
+                pushover("In Stock: (bhphotovideo.com)", url, "BH-BOT")
                 slack_data = {'content': "[" + current_time + "] " + url + " in stock at B&H"}
                 if stockdict.get(url) == 'False':
                     response = requests.post(
-                                             webhook_url, data=json.dumps(slack_data),
-                                             headers={'Content-Type': 'application/json'})
+                        webhook_url, data=json.dumps(slack_data),
+                        headers={'Content-Type': 'application/json'})
                 stockdict.update({url: 'True'})
             else:
                 print("[" + current_time + "] " + "Sold Out: (bhphotovideo.com) " + url)
                 stockdict.update({url: 'False'})
 
-#Classify all the URLs by site
 
+# Classify all the URLs by site
 for url in urldict:
-    hook = urldict[url] #get the hook for the url so it can be passed in to the per-site lists being generated below
+    hook = urldict[url]  # get the hook for the url so it can be passed in to the per-site lists being generated below
 
-    #Amazon URL Detection
+    # Amazon URL Detection
     if "amazon.com" in url:
         if "offer-listing" in url:
             amazonlist.append(url)
@@ -360,12 +388,12 @@ for url in urldict:
         else:
             print("Invalid Amazon link detected. Please use the Offer Listing page.")
 
-    #Target URL Detection
+    # Target URL Detection
     elif "gamestop.com" in url:
         gamestoplist.append(url)
         print("Gamestop URL detected using Webhook destination " + hook)
 
-    #BestBuy URL Detection
+    # BestBuy URL Detection
     elif "bestbuy.com" in url:
         print("BestBuy URL detected using Webhook destination " + hook)
         parsed = urlparse.urlparse(url)
@@ -373,62 +401,62 @@ for url in urldict:
         sku = sku[0]
         bestbuylist.append(sku)
         headers = {
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-        "accept-encoding": "gzip, deflate, br",
-        "accept-language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
-        "cache-control": "max-age=0",
-        "upgrade-insecure-requests": "1",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.69 Safari/537.36"
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+            "accept-encoding": "gzip, deflate, br",
+            "accept-language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+            "cache-control": "max-age=0",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.69 Safari/537.36"
         }
         page = requests.get(url, headers=headers)
         al = page.text
         tree = html.fromstring(page.content)
         img = tree.xpath('//img[@class="primary-image"]/@src')[0]
-        title = al[al.find('<title >') + 8 : al.find(' - Best Buy</title>')]
+        title = al[al.find('<title >') + 8: al.find(' - Best Buy</title>')]
         sku_dict.update({sku: title})
         bbdict.update({sku: hook})
         bbimgdict.update({sku: img})
 
-    #Target URL Detection
+    # Target URL Detection
     elif "target.com" in url:
         targetlist.append(url)
         print("Target URL detected using Webhook destination " + hook)
 
-    #Walmart URL Detection
+    # Walmart URL Detection
     elif "walmart.com" in url:
         walmartlist.append(url)
         print("Walmart URL detected using Webhook destination " + hook)
 
-    #B&H Photo URL Detection
+    # B&H Photo URL Detection
     elif "bhphotovideo.com" in url:
         bhlist.append(url)
         print("B&H URL detected using Webhook destination " + hook)
 
-#set all URLs to be "out of stock" to begin
+# set all URLs to be "out of stock" to begin
 for url in urldict:
-    stockdict.update({url: 'False'}) 
-#set all SKUs to be "out of stock" to begin
+    stockdict.update({url: 'False'})
+# set all SKUs to be "out of stock" to begin
 for sku in sku_dict:
     stockdict.update({sku: 'False'})
-    
-#DECLARE SITE FUNCTIONS
+
+
+# DECLARE SITE FUNCTIONS
 
 def amzfunc(url):
     while True:
-        hook = urldict[url]
         try:
             Amazon(url, hook)
         except:
-            print("Some error ocurred parsing Amazon")
+            print("Some error occurred while parsing Amazon")
         time.sleep(10)
 
 def gamestopfunc(url):
     while True:
         hook = urldict[url]
-        try:
-            Gamestop(url, hook)
-        except:
-            print("Some error ocurred parsing Gamestop")
+        # try:
+        Gamestop(url, hook)
+        # except:
+        #     print("Some error occurred while parsing Gamestop")
         time.sleep(10)
 
 
@@ -438,8 +466,9 @@ def targetfunc(url):
         try:
             Target(url, hook)
         except:
-            print("Some error ocurred parsing Target")
+            print("Some error occurred while parsing Target")
         time.sleep(10)
+
 
 def bhfunc(url):
     while True:
@@ -447,8 +476,9 @@ def bhfunc(url):
         try:
             BH(url, hook)
         except:
-            print("Some error ocurred parsing BH Photo")
+            print("Some error occurred while parsing BH Photo")
         time.sleep(10)
+
 
 def bestbuyfunc(sku):
     while True:
@@ -456,16 +486,18 @@ def bestbuyfunc(sku):
         try:
             BestBuy(sku, hook)
         except:
-            print("Some error ocurred parsing Best Buy")
+            print("Some error occurred while parsing Best Buy")
         time.sleep(10)
+
 
 def walmartfunc(url):
     while True:
         hook = urldict[url]
         try:
             Walmart(url, hook)
-        except:
-            print("Some error ocurred parsing WalMart")
+        except Exception as e:
+            print("Some error occurred while parsing WalMart")
+            print(e.with_traceback())
         time.sleep(10)
 
 
